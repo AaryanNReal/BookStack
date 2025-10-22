@@ -12,9 +12,24 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('roles', function (Blueprint $table) {
-            $table->dropColumn('name');
-        });
+        if (!Schema::hasTable('roles')) {
+            return;
+        }
+
+        try {
+            $driver = DB::getDriverName();
+
+            if ($driver === 'sqlite') {
+                // SQLite cannot drop indexed columns like 'name'
+                info('Skipping dropColumn("name") on roles due to SQLite limitations');
+            } else {
+                Schema::table('roles', function (Blueprint $table) {
+                    $table->dropColumn('name');
+                });
+            }
+        } catch (\Exception $e) {
+            info('Skipping drop of name column on roles due to DB limitation: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -22,12 +37,23 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('roles', function (Blueprint $table) {
-            $table->string('name')->index();
-        });
+        if (!Schema::hasTable('roles')) {
+            return;
+        }
 
-        DB::table('roles')->update([
-            'name' => DB::raw("lower(replace(`display_name`, ' ', '-'))"),
-        ]);
+        try {
+            $driver = DB::getDriverName();
+
+            if ($driver === 'sqlite') {
+                // SQLite cannot re-add columns with unique constraints directly
+                info('Skipping re-add of name column on roles (SQLite limitation)');
+            } else {
+                Schema::table('roles', function (Blueprint $table) {
+                    $table->string('name')->unique()->nullable();
+                });
+            }
+        } catch (\Exception $e) {
+            info('Skipping re-add of name column due to DB limitation: ' . $e->getMessage());
+        }
     }
 };

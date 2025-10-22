@@ -10,11 +10,13 @@ return new class extends Migration
      * Run the migrations.
      */
     public function up(): void
-    {
-        Schema::table('users', function (Blueprint $table) {
-            $table->string('external_auth_id')->index();
-        });
-    }
+{
+    Schema::table('users', function (Blueprint $table) {
+        // Use nullable so SQLite can add the column without error
+        $table->string('external_auth_id')->nullable()->index();
+    });
+}
+
 
     /**
      * Reverse the migrations.

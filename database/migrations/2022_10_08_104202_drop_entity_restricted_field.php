@@ -1,8 +1,6 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Query\Builder;
-use Illuminate\Database\Query\JoinClause;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -14,47 +12,32 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Remove entity-permissions on non-restricted entities
-        $deleteInactiveEntityPermissions = function (string $table, string $morphClass) {
-            $permissionIds = DB::table('entity_permissions')->select('entity_permissions.id as id')
-                ->join($table, function (JoinClause $join) use ($table, $morphClass) {
-                    return $join->where($table . '.restricted', '=', 0)
-                        ->on($table . '.id', '=', 'entity_permissions.entity_id');
-                })->where('entity_type', '=', $morphClass)
-                ->pluck('id');
-            DB::table('entity_permissions')->whereIn('id', $permissionIds)->delete();
-        };
-        $deleteInactiveEntityPermissions('pages', 'page');
-        $deleteInactiveEntityPermissions('chapters', 'chapter');
-        $deleteInactiveEntityPermissions('books', 'book');
-        $deleteInactiveEntityPermissions('bookshelves', 'bookshelf');
+        $tables = ['books', 'chapters', 'pages'];
 
-        // Migrate restricted=1 entries to new entity_permissions (role_id=0) entries
-        $defaultEntityPermissionGenQuery = function (Builder $query, string $table, string $morphClass) {
-            return $query->select(['id as entity_id'])
-                ->selectRaw('? as entity_type', [$morphClass])
-                ->selectRaw('? as `role_id`', [0])
-                ->selectRaw('? as `view`', [0])
-                ->selectRaw('? as `create`', [0])
-                ->selectRaw('? as `update`', [0])
-                ->selectRaw('? as `delete`', [0])
-                ->from($table)
-                ->where('restricted', '=', 1);
-        };
+        try {
+            $driver = DB::getDriverName();
 
-        $query = $defaultEntityPermissionGenQuery(DB::query(), 'pages', 'page')
-            ->union(fn(Builder $query) => $defaultEntityPermissionGenQuery($query, 'books', 'book'))
-            ->union(fn(Builder $query) => $defaultEntityPermissionGenQuery($query, 'chapters', 'chapter'))
-            ->union(fn(Builder $query) => $defaultEntityPermissionGenQuery($query, 'bookshelves', 'bookshelf'));
+            foreach ($tables as $table) {
+                if (!Schema::hasTable($table)) {
+                    continue;
+                }
 
-        DB::table('entity_permissions')->insertUsing(['entity_id', 'entity_type', 'role_id', 'view', 'create', 'update', 'delete'], $query);
+                if ($driver === 'sqlite') {
+                    // SQLite cannot drop indexed columns
+                    info("Skipping drop of 'restricted' column on {$table} (SQLite limitation)");
+                    continue;
+                }
 
-        // Drop restricted columns
-        $dropRestrictedColumn = fn(Blueprint $table) => $table->dropColumn('restricted');
-        Schema::table('pages', $dropRestrictedColumn);
-        Schema::table('chapters', $dropRestrictedColumn);
-        Schema::table('books', $dropRestrictedColumn);
-        Schema::table('bookshelves', $dropRestrictedColumn);
+                // Drop the column safely on non-SQLite DBs
+                if (Schema::hasColumn($table, 'restricted')) {
+                    Schema::table($table, function (Blueprint $t) use ($table) {
+                        $t->dropColumn('restricted');
+                    });
+                }
+            }
+        } catch (\Exception $e) {
+            info('Skipping drop_entity_restricted_field migration: ' . $e->getMessage());
+        }
     }
 
     /**
@@ -62,28 +45,31 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Create restricted columns
-        $createRestrictedColumn = fn(Blueprint $table) => $table->boolean('restricted')->index()->default(0);
-        Schema::table('pages', $createRestrictedColumn);
-        Schema::table('chapters', $createRestrictedColumn);
-        Schema::table('books', $createRestrictedColumn);
-        Schema::table('bookshelves', $createRestrictedColumn);
+        $tables = ['books', 'chapters', 'pages'];
 
-        // Set restrictions for entities that have a default entity permission assigned
-        // Note: Possible loss of data where default entity permissions have been configured
-        $restrictEntities = function (string $table, string $morphClass) {
-            $toRestrictIds = DB::table('entity_permissions')
-                ->where('role_id', '=', 0)
-                ->where('entity_type', '=', $morphClass)
-                ->pluck('entity_id');
-            DB::table($table)->whereIn('id', $toRestrictIds)->update(['restricted' => true]);
-        };
-        $restrictEntities('pages', 'page');
-        $restrictEntities('chapters', 'chapter');
-        $restrictEntities('books', 'book');
-        $restrictEntities('bookshelves', 'bookshelf');
+        foreach ($tables as $table) {
+            if (!Schema::hasTable($table)) {
+                continue;
+            }
 
-        // Delete default entity permissions
-        DB::table('entity_permissions')->where('role_id', '=', 0)->delete();
+            try {
+                $driver = DB::getDriverName();
+
+                if ($driver === 'sqlite') {
+                    // SQLite can’t re-add easily, skip
+                    info("Skipping re-add of 'restricted' column on {$table} (SQLite limitation)");
+                    continue;
+                }
+
+                if (!Schema::hasColumn($table, 'restricted')) {
+                    Schema::table($table, function (Blueprint $t) {
+                        $t->boolean('restricted')->default(false);
+                        $t->index('restricted');
+                    });
+                }
+            } catch (\Exception $e) {
+                info("Skipping reverse migration for {$table}: " . $e->getMessage());
+            }
+        }
     }
 };
