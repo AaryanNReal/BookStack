@@ -1,33 +1,25 @@
-# Use official PHP 8.2 with Apache (slim version for smaller image)
 FROM php:8.2-apache-bullseye
 
-# Install required system libraries
+# ---- System packages ----
 RUN apt-get update && apt-get install -y \
-    libfreetype6-dev \
-    libjpeg62-turbo-dev \
+    pkg-config \
+    libonig-dev \
     libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
     libzip-dev \
-    zip \
-    unzip \
-    git \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) gd pdo pdo_mysql mbstring exif zip \
-    && rm -rf /var/lib/apt/lists/*
+    zip unzip git curl \
+ && docker-php-ext-configure gd --with-freetype --with-jpeg \
+ && docker-php-ext-install -j$(nproc) gd mbstring pdo_mysql exif zip \
+ && a2enmod rewrite \
+ && rm -rf /var/lib/apt/lists/*
 
-# Enable Apache mod_rewrite (needed for BookStack)
-RUN a2enmod rewrite
-
-# Copy application files
+# ---- Copy application ----
+WORKDIR /var/www/html
 COPY . /var/www/html
 
-# Set working directory
-WORKDIR /var/www/html
-
-# Adjust permissions for Apache
+# Permissions
 RUN chown -R www-data:www-data /var/www/html
 
-# Expose the port Render expects
 EXPOSE 8080
-
-# Start Apache
 CMD ["apache2-foreground"]
